@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f0f23">
+<title>Прыг-Скок</title>
+<style>
+  html { height: 100%; }
+  body {
+    margin: 0;
+    position: fixed;
+    inset: 0;
+    background: #0f0f23;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function(){
+  'use strict';
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  let W = 0, H = 0, dpr = 1;
+  const GROUND_H = 70;
+  let groundY = 0;
+
+  function resize(){
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth;
+    H = canvas.clientHeight;
+    canvas.width  = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    groundY = H - GROUND_H;
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  const GRAVITY = 2400;
+  const JUMP_VEL = -850;
+
+  const game = {
+    over: false,
+    score: 0,
+    best: parseInt(localStorage.getItem('jump_best') || '0', 10) || 0,
+    speed: 320,
+    spawnTimer: 1.0,
+    obstacles: [],
+    player: { x: 70, w: 40, h: 40, y: 0, vy: 0, onGround: true }
+  };
+
+  function reset(){
+    game.over = false;
+    game.score = 0;
+    game.speed = 320;
+    game.spawnTimer = 1.0;
+    game.obstacles.length = 0;
+    game.player.y = 0;
+    game.player.vy = 0;
+    game.player.onGround = true;
+  }
+
+  function jump(){
+    if (game.over){ reset(); return; }
+    if (game.player.onGround){
+      game.player.vy = JUMP_VEL;
+      game.player.onGround = false;
+    }
+  }
+
+  let lastInput = 0;
+  function onInput(e){
+    if (e && e.cancelable) e.preventDefault();
+    const now = performance.now();
+    if (now - lastInput < 60) return;
+    lastInput = now;
+    jump();
+  }
+  canvas.addEventListener('touchstart', onInput, { passive: false });
+  canvas.addEventListener('mousedown', onInput);
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp'){ e.preventDefault(); onInput(); }
+  });
+
+  function spawnObstacle(){
+    const h = 35 + Math.random() * 45;
+    const w = 22 + Math.random() * 24;
+    game.obstacles.push({ x: W + 20, w, h });
+  }
+
+  function update(dt){
+    if (game.over) return;
+    const p = game.player;
+
+    if (!p.onGround){
+      p.vy += GRAVITY * dt;
+      p.y += p.vy * dt;
+      if (p.y >= 0){ p.y = 0; p.vy = 0; p.onGround = true; }
+    }
+
+    game.score += dt * 10;
+    game.speed = Math.min(750, 320 + game.score * 0.9);
+
+    game.spawnTimer += dt;
+    const interval = Math.max(0.9, 1.6 - game.score * 0.006);
+    if (game.spawnTimer >= interval){
+      game.spawnTimer = 0;
+      spawnObstacle();
+    }
+
+    for (let i = game.obstacles.length - 1; i >= 0; i--){
+      const o = game.obstacles[i];
+      o.x -= game.speed * dt;
+      if (o.x + o.w < -20) game.obstacles.splice(i, 1);
+    }
+
+    const pL = p.x, pR = p.x + p.w;
+    const pB = groundY - p.y;
+    const pT = pB - p.h;
+    for (const o of game.obstacles){
+      const oB = groundY;
+      const oT = oB - o.h;
+      if (pR > o.x && pL < o.x + o.w && pB > oT && pT < oB){
+        game.over = true;
+        if (Math.floor(game.score) > game.best){
+          game.best = Math.floor(game.score);
+          try { localStorage.setItem('jump_best', String(game.best)); } catch(e){}
+        }
+        break;
+      }
+    }
+  }
+
+  function render(){
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#0f0f23');
+    grad.addColorStop(1, '#1e1e46');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    const starH = Math.max(1, groundY - 20);
+    for (let i = 0; i < 40; i++){
+      const sx = (i * 137.5) % Math.max(1, W);
+      const sy = (i * 73.3) % starH;
+      ctx.fillRect(sx, sy, 2, 2);
+    }
+
+    ctx.fillStyle = '#252560';
+    ctx.fillRect(0, groundY, W, GROUND_H);
+    ctx.fillStyle = '#4a4ad0';
+    ctx.fillRect(0, groundY, W, 4);
+
+    for (const o of game.obstacles){
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(o.x, groundY - o.h, o.w, o.h);
+      ctx.fillStyle = '#b91c1c';
+      ctx.fillRect(o.x, groundY - o.h, o.w, Math.min(6, o.h));
+    }
+
+    const p = game.player;
+    const px = p.x, py = groundY - p.y - p.h;
+    ctx.fillStyle = '#4ade80';
+    ctx.fillRect(px, py, p.w, p.h);
+    ctx.fillStyle = '#0f0f23';
+    ctx.fillRect(px + p.w - 14, py + 10, 6, 6);
+    ctx.fillRect(px + p.w - 26, py + 10, 6, 6);
+
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.fillText('Счёт: ' + Math.floor(game.score), 16, 16);
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('Рекорд: ' + game.best, 16, 44);
+
+    if (game.over){
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 34px system-ui, sans-serif';
+      ctx.fillText('Игра окончена', W / 2, H / 2 - 40);
+      ctx.font = '20px system-ui, sans-serif';
+      ctx.fillStyle = '#4ade80';
+      ctx.fillText('Счёт: ' + Math.floor(game.score), W / 2, H / 2 + 5);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = '18px system-ui, sans-serif';
+      ctx.fillText('Тапни, чтобы сыграть снова', W / 2, H / 2 + 55);
+    }
+  }
+
+  let last = 0;
+  function loop(now){
+    if (!last) last = now;
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.05) dt = 0.05;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
